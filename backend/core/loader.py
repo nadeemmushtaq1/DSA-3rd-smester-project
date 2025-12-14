@@ -1,9 +1,15 @@
 """
 core/loader.py
 
-Role: Loader module to fetch books from the database and populate the DSA engine.
-- Ensures in-memory structures (AVL, HashTable, Trie) are ready at application startup.
-- Keeps backend DSA-first approach high-level and presentation-ready.
+DEPRECATED: This module is no longer used.
+Use services.library.dsa_engine and app.py startup hook instead.
+
+The DSA Engine is now initialized in app.py at startup, which properly:
+1. Creates a singleton DSAEngine in services.library
+2. Loads all books from database
+3. Populates Trie, AVL, and Hash Table
+
+This file is kept for backward compatibility only.
 """
 
 from sqlalchemy.orm import Session
@@ -16,6 +22,8 @@ dsa_engine = DSAEngine()
 
 def load_books_from_db(db: Session):
     """
+    DEPRECATED: Use app.py startup hook instead.
+    
     Load all books from the database into DSA structures
     :param db: SQLAlchemy session
     """

@@ -4,12 +4,16 @@ routes/member.py
 Role: Member endpoints for searching books, viewing their issued books, and fines.
 - Search uses DSA structures (Trie for title/author prefix, AVL for sorted traversal, Hash for exact ISBN).
 - Members cannot issue or return books directly; they can request searches and view their records.
+- All searches now use DSA with performance metrics tracking
 """
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from db import get_db
-from services.library import search_by_title, search_by_author, search_by_isbn
+from services.library import (
+    search_by_title, search_by_author, search_by_isbn, 
+    search_sorted_titles, search_by_title_range, dsa_engine
+)
 from models import Author
 
 router = APIRouter(
@@ -23,44 +27,119 @@ router = APIRouter(
 @router.get("/search/title/{title_prefix}")
 def member_search_title(title_prefix: str, db: Session = Depends(get_db)):
     """
-    Search books by title prefix using Trie → AVL → Hash for fast DSA-based results.
+    Search books by title prefix using Trie (O(m) where m = prefix length)
+    Returns results instantly without database queries
     """
     results = search_by_title(db, title_prefix)
     if not results:
         raise HTTPException(status_code=404, detail="No books found")
-    return {"books": results}
+    return {
+        "books": results,
+        "search_type": "Trie Prefix Search",
+        "results_count": len(results)
+    }
 
 
 # ---------------------------
-# Search Books by Author
+# Search Books by Author (DSA-Powered)
 # ---------------------------
 @router.get("/search/author/{author_prefix}")
 def member_search_author(author_prefix: str, db: Session = Depends(get_db)):
     """
-    Search books by author prefix using Trie → AVL → Hash.
+    Search books by author prefix using Author Trie (O(m) where m = prefix length)
+    DSA-powered author search without database queries
     """
     results = search_by_author(db, author_prefix)
     if not results:
         raise HTTPException(status_code=404, detail="No books found")
-    return {"books": results}
+    return {
+        "books": results,
+        "search_type": "Author Trie Prefix Search",
+        "results_count": len(results)
+    }
 
 
 # ---------------------------
-# Search Book by ISBN (Exact Match)
+# Search Book by ISBN (O(1) Hash Lookup)
 # ---------------------------
 @router.get("/search/isbn/{isbn}")
 def member_search_isbn(isbn: str, db: Session = Depends(get_db)):
     """
-    Search for a book by exact ISBN using Hash Table.
+    Search for a book by exact ISBN using Hash Table (O(1) average case)
+    Fastest possible search, results cached in-memory
     """
     book = search_by_isbn(db, isbn)
     if not book:
         raise HTTPException(status_code=404, detail="Book not found")
-    return {"book": book}
+    return {
+        "book": book,
+        "search_type": "Hash Table O(1) Lookup",
+    }
 
 
 # ---------------------------
-# Get All Books
+# Get All Books (Sorted)
+# ---------------------------
+@router.get("/books/sorted")
+def member_get_books_sorted(db: Session = Depends(get_db)):
+    """
+    Get all books sorted alphabetically by title using AVL Tree inorder traversal
+    Pre-sorted without database overhead
+    """
+    books = search_sorted_titles(db)
+    return {
+        "books": books,
+        "sort_method": "AVL Tree Inorder Traversal",
+        "total_books": len(books)
+    }
+
+
+# ---------------------------
+# Search by Title Range
+# ---------------------------
+@router.get("/search/title-range")
+def member_search_title_range(
+    min_title: str = "a",
+    max_title: str = "z",
+    db: Session = Depends(get_db)
+):
+    """
+    Range search on book titles using AVL Tree
+    Returns books with titles between min_title and max_title (alphabetically)
+    Example: /search/title-range?min_title=a&max_title=m
+    """
+    results = search_by_title_range(db, min_title.lower(), max_title.lower())
+    return {
+        "books": results,
+        "search_type": "AVL Range Query",
+        "title_range": f"{min_title} to {max_title}",
+        "results_count": len(results)
+    }
+
+
+# ---------------------------
+# DSA Performance Metrics
+# ---------------------------
+@router.get("/dsa/metrics")
+def member_get_dsa_metrics(db: Session = Depends(get_db)):
+    """
+    Get DSA Engine performance metrics
+    Shows search counts and total execution time
+    """
+    metrics = dsa_engine.get_performance_metrics()
+    return {
+        "dsa_metrics": metrics,
+        "structures": {
+            "trie": "Prefix search on book titles",
+            "author_trie": "Prefix search on author names",
+            "avl_tree": "Sorted traversal and range queries",
+            "hash_table": "O(1) ISBN lookups"
+        }
+    }
+
+
+# ---------------------------
+# Get All Books (Legacy)
 # ---------------------------
 @router.get("/books")
 def member_get_books(db: Session = Depends(get_db)):

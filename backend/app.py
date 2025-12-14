@@ -13,8 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 
 from db import init_db, SessionLocal
-from core.engine import DSAEngine
-from core.loader import load_books_from_db
+from services.library import dsa_engine
+from models import Book
+from logger import log_system
 from services.fine_scheduler import start_scheduler, stop_scheduler
 
 from routes.auth import router as auth_router
@@ -46,37 +47,50 @@ app.add_middleware(
 
 
 # -------------------------------------------------
-# 3) Global DSA Engine (AVL + Hash + Trie)
+# 3) Global DSA Engine from library service
 # -------------------------------------------------
-dsa_engine = DSAEngine()
-
+# dsa_engine is imported from services.library and used throughout
 
 # -------------------------------------------------
-# 4) App startup hook
+# 4) App startup hook - Initialize DB and Load DSA
 # -------------------------------------------------
 @app.on_event("startup")
 def startup_event():
     """
     At server startup:
     - Initialize DB
-    - Load BOOK DATA from DB into DSA structures
+    - Load BOOK DATA from DB into DSA structures (Trie, AVL, Hash)
     - Start fine scheduler
     """
-
     print("[INFO] Initializing MySQL connection...")
     init_db()
 
-    print("[INFO] Loading database into DSA structures...")
+    print("[INFO] Loading database books into DSA structures (Trie, AVL, Hash Table)...")
     db = SessionLocal()
     try:
-        load_books_from_db(db)
+        # Load all books from database
+        books = db.query(Book).all()
+        print(f"[INFO] Found {len(books)} books in database")
+        
+        # Populate DSA Engine with all books
+        dsa_engine.load_books(books, db=db)
+        
+        log_system("STARTUP", f"Loaded {len(books)} books into DSA structures", 0)
+        print(f"[INFO] ✓ DSA Engine initialized with {len(books)} books")
+        print("[INFO]   - Trie (prefix search on titles)")
+        print("[INFO]   - AVL Tree (sorted title traversal)")
+        print("[INFO]   - Hash Table (O(1) ISBN lookup)")
+    except Exception as e:
+        print(f"[ERROR] Failed to load books into DSA: {str(e)}")
+        raise
     finally:
         db.close()
 
     print("[INFO] Starting fine update scheduler...")
     start_scheduler()
 
-    print("[INFO] System Ready (AVL + Trie + HashTable + Scheduler active)")
+    print("[INFO] ✓ System Ready - DSA Engine Active!")
+    print("[INFO] Endpoints: /member/search/title, /member/search/author, /member/search/isbn")
 
 
 # -------------------------------------------------
@@ -117,3 +131,6 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now().isoformat()
     }
+
+
+#python -m uvicorn app:app --host 127.0.0.1 --port 8000 --reload
