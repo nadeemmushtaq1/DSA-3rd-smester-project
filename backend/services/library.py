@@ -9,35 +9,16 @@ Role: Core backend service coordinating DSA structures (AVL, Hash, Trie) with da
 
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
-from dsa.avl import AVLTree
-from dsa.hash_table import HashTable
-from dsa.trie import Trie
+from core.engine import DSAEngine
 from db import get_db
 from models import Book, IssueRecord, User, LibraryPolicy, UserFine
 from logger import log_system
 from utils import calculate_fine, compute_due_date, compute_lost_penalty
 
 # ---------------------------
-# Global DSA structures (in-memory)
+# Global DSA Engine (singleton)
 # ---------------------------
-avl_titles = AVLTree()          # AVL for sorted title operations
-hash_isbn = HashTable()          # Hash for O(1) lookup by ISBN
-trie_titles = Trie()             # Trie for prefix searches
-
-# ---------------------------
-# Load books from DB → Build DSA
-# ---------------------------
-def load_from_db(db: Session):
-    """
-    Load all books from DB into DSA structures at startup.
-    """
-    books = db.query(Book).all()
-    for book in books:
-        avl_titles.insert(book.title, book.book_id)
-        hash_isbn.insert(book.isbn, book.book_id)
-        trie_titles.insert(book.title, book, db)  # Pass book object, not book_id
-
-    log_system("LOAD", f"Loaded {len(books)} books into DSA structures", 0)
+dsa_engine = DSAEngine()
 
 
 # ---------------------------
@@ -48,19 +29,19 @@ def add_new_book(db: Session, book: Book):
     db.commit()
     db.refresh(book)
 
-    # DSA sync
-    avl_titles.insert(book.title, book.book_id)
-    hash_isbn.insert(book.isbn, book.book_id)
-    trie_titles.insert(book.title, book, db)  # Pass book object to trie, not book_id
+    # DSA sync - use DSAEngine
+    dsa_engine.avl.insert(book.title.lower(), book)
+    dsa_engine.hash_table.insert(book.isbn, book)
+    dsa_engine.trie.insert(book.title, book, db)
 
     log_system("INSERT", f"Book '{book.title}' added to DSA + DB", 0)
 
 
 def remove_book(db: Session, book: Book):
-    # DSA sync
-    avl_titles.delete(book.title)
-    hash_isbn.delete(book.isbn)
-    trie_titles.delete(book.title, book)  # Pass book object to delete method
+    # DSA sync - use DSAEngine
+    dsa_engine.avl.delete(book.title.lower())
+    dsa_engine.hash_table.delete(book.isbn)
+    dsa_engine.trie.delete(book.title, book)
 
     db.delete(book)
     db.commit()
@@ -86,40 +67,50 @@ def update_existing_book(db: Session, book: Book, updated_fields: dict):
 # ---------------------------
 def search_by_title(db: Session, title_prefix: str):
     """
-    Use Trie → AVL → Hash sequence for searching titles
+    Use Trie for prefix search on titles (O(m) where m = prefix length)
+    Returns Book objects directly from DSA without additional DB query
+    Performance tracked in dsa_engine.metrics
     """
-    matched_ids = trie_titles.prefix_search(title_prefix)
-    results = []
-    for book_id in matched_ids:
-        book = db.query(Book).filter_by(book_id=book_id).first()
-        if book:
-            results.append(book)
-    return results
+    # DSA-first approach: use Trie for prefix search
+    matched_books = dsa_engine.search_by_title_prefix(title_prefix)
+    return matched_books
 
 
 def search_by_author(db: Session, author_prefix: str):
     """
-    Use Trie on author names → AVL for sorting
+    Use Author Trie for prefix search on author names (O(m) where m = prefix length)
+    DSA-powered instead of database filtering
+    Returns Book objects directly from DSA
     """
-    # Simple example: filter authors starting with prefix
-    from models import Author
-    authors = db.query(Author).filter(Author.author_name.like(f"{author_prefix}%")).all()
-    results = []
-    for author in authors:
-        books = db.query(Book).filter_by(author_id=author.author_id).all()
-        results.extend(books)
-    return results
+    # DSA-first approach: use Author Trie for prefix search
+    matched_books = dsa_engine.search_by_author_prefix(author_prefix)
+    return matched_books
 
 
 def search_by_isbn(db: Session, isbn: str):
     """
-    Hash table exact ISBN lookup using DSA Engine
+    Hash table exact ISBN lookup using DSA Engine (O(1) average case)
+    Returns Book object directly without DB query
     """
-    from core.loader import dsa_engine
     book = dsa_engine.search_by_isbn(isbn)
-    if not book:
-        return None
     return book
+
+
+def search_sorted_titles(db: Session) -> list:
+    """
+    Return all books sorted alphabetically by title using AVL inorder traversal
+    O(n) operation but returns pre-sorted results without DB sort
+    """
+    return dsa_engine.get_all_sorted()
+
+
+def search_by_title_range(db: Session, min_title: str, max_title: str) -> list:
+    """
+    Range query on book titles using AVL tree
+    Returns all books with titles between min_title and max_title (inclusive)
+    Useful for browsing books in alphabetical ranges
+    """
+    return dsa_engine.get_range(min_title, max_title)
 
 
 # ---------------------------

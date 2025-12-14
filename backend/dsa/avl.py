@@ -208,3 +208,18 @@ class AVLTree:
         self._inorder(node.left, result)
         result.append(node.value)
         self._inorder(node.right, result)
+    def range_search(self, min_key: str, max_key: str) -> List[Book]:
+        """
+        Range query: return all books with keys between min_key and max_key (inclusive)
+        Performs in-order traversal and filters by range
+        Time: O(n) in worst case, but efficient for typical range queries
+        """
+        all_books = []
+        self._inorder(self.root, all_books)
+        
+        result = []
+        for book in all_books:
+            if min_key <= book.title.lower() <= max_key:
+                result.append(book)
+        
+        return result
